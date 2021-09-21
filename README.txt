@@ -1,0 +1,1 @@
+This repo is for system programming course. 2nd year BSU FAMCS.
