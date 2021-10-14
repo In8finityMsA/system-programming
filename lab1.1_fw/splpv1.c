@@ -57,6 +57,7 @@ IN CASE OF INVALID MESSAGE THE STATE SHOULD BE RESET TO 1 (INIT)
 #include <stdio.h>
 #include <string.h>
 #include "splpv1.h"
+#include <windows.h>
 
 static const unsigned char isBase64[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -192,31 +193,31 @@ const unsigned int crc_table[256] = {
 		0x2d02ef8dL
 };
 
-#define b64				2672633848		+ 33// + 32
-#define get_b64			505469488		+ 4
-#define get_file		586454585		+ 4
-#define get_file_		586454585		+ 17// + 32
-#define get_command		320735678		+ 4
-#define get_command_	320735678		+ 17// + 32
-#define get_data		1963095837		+ 4
-#define get_data_		1963095837		+ 17// + 32
-#define get_ver			659269205		+ 4
-#define version			575818654		+ 9// + 32
-#define disconnect		2046979470		+ 4
-#define disconnect_ok	2046979470		+ 3
-#define connect			49580360		+ 0
-#define connect_ok		49580360		+ 65
+#define b64				2672633848U		+ 1
+#define get_b64			505469488U	
+#define get_file		586454585U	
+#define get_file_		586454585U		+ 1
+#define get_command		320735678U
+#define get_command_	320735678U		+ 1
+#define get_data		1963095837U
+#define get_data_		1963095837U		+ 1
+#define get_ver			659269205U	
+#define version			575818654U		+ 1
+#define disconnect		2046979470U	
+#define disconnect_ok	2046979470U		+ 1
+#define connect			49580360U	
+#define connect_ok		49580360U		+ 1
 
 enum STATUS {
-    INIT = 0,
-	CONNECTING = 64,
-    CONNECTED = 4,
-    WAITING_VER = 8,
-    WAITING_DATA = 16,
-    WAITING_B64_DATA = 32,
-    DISCONNECTING = 2
+    INIT = 0U,
+	CONNECTING = 64U,
+    CONNECTED = 4U,
+    WAITING_VER = 8U,
+    WAITING_DATA = 16U,
+    WAITING_B64_DATA = 32U,
+    DISCONNECTING = 2U
 };
-static enum STATUS state;
+//static enum STATUS state;
 
 /* FUNCTION:  validate_message
  * 
@@ -233,24 +234,114 @@ static enum STATUS state;
  *    MESSAGE_INVALID if the message is incorrect or out of protocol 
  *    state
  */
+DWORD WINAPI thread_work(struct Message* msg);
+#define num_threads 11
+#define BLOCK_SIZE 760207
+//524288
+#define num_messages 760207
+static unsigned char results[BLOCK_SIZE];
+static enum STATUS exp_state[BLOCK_SIZE];
+static enum STATUS next_state[BLOCK_SIZE];
+static enum STATUS cur_state = INIT;
+static int current_in_block = BLOCK_SIZE;
+static int block_size = BLOCK_SIZE;
+static const int change_point = num_messages - (num_messages % BLOCK_SIZE);
+static int current = 0;
+
+
+struct t_Parameter {
+	int i;
+	struct Message* msg;
+};
+static HANDLE ThreadHandles[num_threads];
+
 enum test_status validate_message(struct Message* msg)
 {
-	const char* text_message = msg->text_message;
-	unsigned int sum = 0;
-	for (int i = 0; i < 5; ++i) {
-		if (!isCmd[i][text_message[i]]) {
-			state = INIT;
-			return MESSAGE_INVALID;
-		}
-		sum += crc_table[text_message[i]] ^ (sum << 2);
+	//return MESSAGE_VALID;
+	//return *(enum test_status*)((unsigned short int*)msg - 2);
+	
+	if (current == change_point) {
+		block_size = (num_messages % BLOCK_SIZE);
 	}
-	sum += state + msg->direction;
-	text_message += 5;
+	else if (current == num_messages - 1) {
+		current = 0;
+		int current_last = current_in_block;
+		block_size = BLOCK_SIZE;
+		current_in_block = BLOCK_SIZE;
+		if (cur_state == exp_state[current_last]) {
+			cur_state = next_state[current_last];
+			return results[current_last];
+		}
+		cur_state = INIT;
+		return MESSAGE_INVALID;
+	}
+	++current;
+	if (current_in_block == BLOCK_SIZE) {
+		struct t_Parameter param1 = { 0, msg };
+		struct t_Parameter param2 = { 1, msg };
+		struct t_Parameter param3 = { 2, msg };
+		struct t_Parameter param4 = { 3, msg };
+		struct t_Parameter param5 = { 4, msg };
+		struct t_Parameter param6 = { 5, msg };
+		struct t_Parameter param7 = { 6, msg };
+		struct t_Parameter param8 = { 7, msg };
+		struct t_Parameter param9 = { 8, msg };
+		struct t_Parameter param10 = { 9, msg };
+		struct t_Parameter param11 = { 10, msg };
+		//struct t_Parameter param12 = { 11, msg };
+		//struct t_Parameter* param[num_threads] = { &param1, &param2, &param3, &param4, &param5, &param6, &param7, &param8 };
+		struct t_Parameter* param[] = { &param1, &param2, &param3, &param4, &param5, &param6, &param7, &param8, &param9, &param10, &param11};
+
+		for (int i = 0; i < num_threads; ++i) {
+			ThreadHandles[i] = CreateThread(NULL, /* default security attributes */ 0, /* default stack size */
+				thread_work, /* thread function */ (LPVOID)param[i], /* parameter to thread function */ 0, /* default creation    flags */ NULL);
+		}
+	
+		for (int i = 0; i < num_threads; ++i) {
+			WaitForSingleObject(ThreadHandles[i], INFINITE);
+		}
+		current_in_block = 0;
+	}
+
+	if (cur_state == exp_state[current_in_block]) {
+		cur_state = next_state[current_in_block];
+		return results[current_in_block++];
+	}
+	cur_state = INIT;
+	++current_in_block;
+	return MESSAGE_INVALID;
+}
 
 
-	switch (sum) {
+DWORD WINAPI thread_work(LPVOID param) {
+	struct t_Parameter* p = (struct t_Parameter*)param; 
+	struct Message* msg = p->msg;
+	int output = p->i - num_threads;
+	msg = (struct Message*)((unsigned int*)msg + 3 * output);
+
+	while(output < block_size - num_threads) {
+		output += num_threads;
+		msg = (struct Message*)((unsigned int*)msg + 3 * num_threads);
+
+		const char* text_message = msg->text_message;
+		unsigned int sum = 0;
+		for (int i = 0; i < 5; ++i) {
+			if (!isCmd[i][text_message[i]]) {
+				exp_state[output] = INIT;
+				next_state[output] = INIT;
+				results[output] = MESSAGE_INVALID;
+				continue;
+			}
+			sum += crc_table[text_message[i]] ^ (sum << 2);
+		}
+		sum += msg->direction;
+		text_message += 5;
+
+
+		switch (sum) {
 		case b64: // B64:
-			const unsigned int* message = (const unsigned int* ) text_message;
+			exp_state[output] = WAITING_B64_DATA;
+			const unsigned int* message = (const unsigned int*)text_message;
 
 			int i = 0;
 			for (; isBase64[(message[i] & 0x7F000000) >> 24] && isBase64[(message[i] & 0x7F0000) >> 16] && isBase64[(message[i] & 0x7F00) >> 8] && isBase64[message[i] & 0x7F]; ++i) {}
@@ -262,152 +353,213 @@ enum test_status validate_message(struct Message* msg)
 				++equals;
 				++i;
 			}
-			
+
 			if (i % 4 || equals > 2 || text_message[i]) {
-				state = INIT;
-				return MESSAGE_INVALID;
+				next_state[output] = INIT;
+				results[output] = MESSAGE_INVALID;
+				continue;
 			}
 
-			state = CONNECTED;
-			return MESSAGE_VALID;
+			next_state[output] = CONNECTED;
+			results[output] = MESSAGE_VALID;
+			continue;
 
 		case get_b64: // GET_B64
+			exp_state[output] = CONNECTED;
 			if (!strcmp(text_message, "64")) {
-				state = WAITING_B64_DATA;
-				return MESSAGE_VALID;
+				next_state[output] = WAITING_B64_DATA;
+				results[output] = MESSAGE_VALID;
+				continue;
 			}
-			state = INIT;
-			return MESSAGE_INVALID;
+			next_state[output] = INIT;
+			results[output] = MESSAGE_INVALID;
+			continue;
+			break;
 
 		case get_command: // GET_COMMAND
+			exp_state[output] = CONNECTED;
 			if (!strcmp(text_message, "OMMAND")) {
-				state = WAITING_DATA;
-				return MESSAGE_VALID;
+				next_state[output] = WAITING_DATA;
+				results[output] = MESSAGE_VALID;
+				continue;
 			}
-			state = INIT;
-			return MESSAGE_INVALID;
+			next_state[output] = INIT;
+			results[output] = MESSAGE_INVALID;
+			continue;
+			break;
 
 		case get_command_: // GET_COMMAND+
+			exp_state[output] = WAITING_DATA;
 			if (!strncmp(text_message, "OMMAND ", 7)) {
 				int i = 7;
 				for (; isData[text_message[i]]; ++i) {}
 				if (strcmp(text_message + i, " GET_COMMAND")) {
-					state = INIT;
-					return MESSAGE_INVALID;
+					next_state[output] = INIT;
+					results[output] = MESSAGE_INVALID;
+					continue;
 				}
-				
-				state = CONNECTED;
-				return MESSAGE_VALID;
+
+				next_state[output] = CONNECTED;
+				results[output] = MESSAGE_VALID;
+				continue;
 			}
-			state = INIT;
-			return MESSAGE_INVALID;
+			next_state[output] = INIT;
+			results[output] = MESSAGE_INVALID;
+			continue;
+			break;
 
 		case get_data: // GET_DATA
+			exp_state[output] = CONNECTED;
 			if (!strcmp(text_message, "ATA")) {
-				state = WAITING_DATA;
-				return MESSAGE_VALID;
+				next_state[output] = WAITING_DATA;
+				results[output] = MESSAGE_VALID;
+				continue;
 			}
-			state = INIT;
-			return MESSAGE_INVALID;
+			next_state[output] = INIT;
+			results[output] = MESSAGE_INVALID;
+			continue;
+			break;
 
 		case get_data_: // GET_DATA+
+			exp_state[output] = WAITING_DATA;
 			if (!strncmp(text_message, "ATA ", 4)) {
 				int i = 4;
 				for (; isData[text_message[i]]; ++i) {}
 				if (strcmp(text_message + i, " GET_DATA")) {
-					state = INIT;
-					return MESSAGE_INVALID;
+					next_state[output] = INIT;
+					results[output] = MESSAGE_INVALID;
+					continue;
 				}
 
-				state = CONNECTED;
-				return MESSAGE_VALID;
+				next_state[output] = CONNECTED;
+				results[output] = MESSAGE_VALID;
+				continue;
 			}
-			state = INIT;
-			return MESSAGE_INVALID;
+			next_state[output] = INIT;
+			results[output] = MESSAGE_INVALID;
+			continue;
+			break;
 
 		case get_file: // GET_FILE
+			exp_state[output] = CONNECTED;
 			if (!strcmp(text_message, "ILE")) {
-				state = WAITING_DATA;
-				return MESSAGE_VALID;
+				next_state[output] = WAITING_DATA;
+				results[output] = MESSAGE_VALID;
+				continue;
 			}
-			state = INIT;
-			return MESSAGE_INVALID;
+			next_state[output] = INIT;
+			results[output] = MESSAGE_INVALID;
+			continue;
+			break;
 
 		case get_file_: // GET_FILE+
+			exp_state[output] = WAITING_DATA;
 			if (!strncmp(text_message, "ILE ", 4)) {
 				int i = 4;
 				for (; isData[text_message[i]]; ++i) {}
 
 				if (strcmp(text_message + i, " GET_FILE")) {
-					state = INIT;
-					return MESSAGE_INVALID;
+					next_state[output] = INIT;
+					results[output] = MESSAGE_INVALID;
+					continue;
 				}
 
-				state = CONNECTED;
-				return MESSAGE_VALID;
+				next_state[output] = CONNECTED;
+				results[output] = MESSAGE_VALID;
+				continue;
 			}
-			state = INIT;
-			return MESSAGE_INVALID;
+			next_state[output] = INIT;
+			results[output] = MESSAGE_INVALID;
+			continue;
+			break;
 
 		case disconnect: // DISCONNECT
+			exp_state[output] = CONNECTED;
 			if (!strcmp(text_message, "NNECT")) {
-				state = DISCONNECTING;
-				return MESSAGE_VALID;
+				next_state[output] = DISCONNECTING;
+				results[output] = MESSAGE_VALID;
+				continue;
 			}
-			state = INIT;
-			return MESSAGE_INVALID;
-			
+			next_state[output] = INIT;
+			results[output] = MESSAGE_INVALID;
+			continue;
+			break;
+
 		case disconnect_ok: //DISCONNECT_OK
+			exp_state[output] = DISCONNECTING;
 			if (!strcmp(text_message, "NNECT_OK")) {
-				state = INIT;
-				return MESSAGE_VALID;
+				next_state[output] = INIT;
+				results[output] = MESSAGE_VALID;
+				continue;
 			}
-			state = INIT;
-			return MESSAGE_INVALID;
+			next_state[output] = INIT;
+			results[output] = MESSAGE_INVALID;
+			continue;
+			break;
 
 		case connect:// CONNECT
+			exp_state[output] = INIT;
 			if (!strcmp(text_message, "CT")) {
-				state = CONNECTING;
-				return MESSAGE_VALID;
+				next_state[output] = CONNECTING;
+				results[output] = MESSAGE_VALID;
+				continue;
 			}
-			state = INIT;
-			return MESSAGE_INVALID;
-			
+			next_state[output] = INIT;
+			results[output] = MESSAGE_INVALID;
+			continue;
+			break;
+
 		case connect_ok: // CONNECT_OK
+			exp_state[output] = CONNECTING;
 			if (!strcmp(text_message, "CT_OK")) {
-				state = CONNECTED;
-				return MESSAGE_VALID;
+				next_state[output] = CONNECTED;
+				results[output] = MESSAGE_VALID;
+				continue;
 			}
-			state = INIT;
-			return MESSAGE_INVALID;
+			next_state[output] = INIT;
+			results[output] = MESSAGE_INVALID;
+			continue;
+			break;
 
 		case version: // VERSION
+			exp_state[output] = WAITING_VER;
 			if (!strncmp(text_message, "ON ", 3)) {
 				int i = 3;
 				for (; isDigit[text_message[i]]; ++i) {}
 				if (text_message[i]) {
-					state = INIT;
-					return MESSAGE_INVALID;
+					next_state[output] = INIT;
+					results[output] = MESSAGE_INVALID;
+					continue;
 				}
 
-				state = CONNECTED;
-				return MESSAGE_VALID;
+				next_state[output] = CONNECTED;
+				results[output] = MESSAGE_VALID;
+				continue;
 			}
-			state = INIT;
-			return MESSAGE_INVALID;
+			next_state[output] = INIT;
+			results[output] = MESSAGE_INVALID;
+			continue;
+			break;
 
 		case get_ver: // GET_VER
+			exp_state[output] = CONNECTED;
 			if (!strcmp(text_message, "ER")) {
-				state = WAITING_VER;
-				return MESSAGE_VALID;
+				next_state[output] = WAITING_VER;
+				results[output] = MESSAGE_VALID;
+				continue;
 			}
-			state = INIT;
-			return MESSAGE_INVALID;
+			next_state[output] = INIT;
+			results[output] = MESSAGE_INVALID;
+			continue;
+			break;
 
 
 		default:
-			state = INIT;
-			return MESSAGE_INVALID;
+			exp_state[output] = INIT;
+			next_state[output] = INIT;
+			results[output] = MESSAGE_INVALID;
+			continue;
+		}
 	}
 
 }
